@@ -1,0 +1,10 @@
+MANIFEST
+LICENSE
+README
+Todo
+Changes
+lib/Crypt/MP4Stream.pm
+bin/MP4Stream.pl
+t/01_test.t
+Makefile.PL
+META.yml                                 Module meta-data (added by MakeMaker)
