@@ -3,3 +3,6 @@ Revision history for Perl module CGI::NeedSSL
 0.01_01 Mon April 26 2004
     - original version, alpha state, needs work.
     
+0.02 Wed April 28 2004
+    - first properly compiling version
+    

@@ -4,7 +4,7 @@ require 5.004;
 use strict;
 use warnings;
 use vars qw($VERSION);
-$VERSION = '0.01_02';
+$VERSION = '0.02';
 
 use Crypt::Rijndael;
 use Digest::MD5 qw(md5);
@@ -30,7 +30,6 @@ sub new {
     }
     $self->{sPfix} = ($^O =~ /Unix|linux/i) ? '.' : '' unless $self->{sPfix};
     $self->{dirSep} = '/' unless $self->{dirSep};
-    $self->{alg} = 0;
     return $self;
 }
 
@@ -42,46 +41,45 @@ sub GetAtomPos {
 
 sub GetAtomSize {
     my($self, $pos) = @_;
-    return unpack('N', substr($self->{sbuffer}, $pos - 4, 4));
+    return unpack( 'N', substr($self->{sbuffer}, $pos - 4, 4) );
 }    
 
 sub GetAtomData {
     my($self, $pos, $bNetToHost) = @_;
-    return unpack $bNetToHost ? 'N' : 'L', 
-      substr($self->{sbuffer}, $pos + 4, GetAtomSize($pos) - 8);
+    my $buf = substr($self->{sbuffer}, $pos + 4, $self->GetAtomSize($pos) - 8);
+    return ($bNetToHost) ? pack('L*', unpack 'N*', $buf) : $buf; 
 }
 
 sub Decrypt {
     my($self, $cipherText, $offset, $count, $key, $iv) = @_;
-    my $len = ($count / 16) * 16;
-    unless($self->{alg}) {
-        $self->{alg} = new Crypt::Rijndael($key, Crypt::Rijndael::MODE_CBC);
-    }
-    $self->{alg}->set_iv($iv);
-    substr($cipherText, $offset, $len) = 
-      $self->{alg}->decrypt(substr($cipherText, $offset, $len));
+    my $len = int($count / 16) * 16;
+    my $alg = new Crypt::Rijndael($key, Crypt::Rijndael::MODE_CBC);
+    $alg->set_iv($iv);
+    substr( $$cipherText, $offset, $len, 
+      $alg->decrypt(substr($$cipherText, $offset, $len)) );
 }
 
 sub GetUserKey {
     my($self, $userID, $keyID) = @_;
     my ($userKey, $strFile, $fh);
-    $strFile = sprintf("%s%s%s%s%8s.%5d", $self->{strHome}, $self->{dirSep}, 
+    $strFile = sprintf("%s%s%sdrms%s%08X.%03d", $self->{strHome}, $self->{dirSep}, 
       $self->{sPfix}, $self->{dirSep}, $userID, $keyID);
     open($fh, '<', $strFile) or die "Cannot open file $strFile: $!";
     binmode $fh;
-    read($fh, $userKey, -s $strFile);
-    close $fh;
+    read($fh, $userKey, -s $strFile) or die "Cannot read user keyfile: $!";
     return $userKey;
 }
 
 sub GetSampleTable {
     my($self) = @_;
     my $adSTSZ = $self->GetAtomData($self->GetAtomPos($AtomSTSZ), 1);
-    my $sampleCount = unpack('N', substr($adSTSZ, 8, 4));
+    my $sampleCount = unpack('L', substr($adSTSZ, 8, 4));
+    my @samples;
     for(my $i = 0; $i < $sampleCount; $i++) {
-        $self->{sampleTable}->[$i] = 
-          unpack('N', substr($adSTSZ, 12 + ($i * 4), 4));
+        my $s = unpack( 'L', substr($adSTSZ, 12 + ($i * 4), 4) );
+        push @samples, $s;
     }
+    $self->{sampleTable} = \@samples;
 }
 
 sub DeDRMS {
@@ -95,32 +93,33 @@ sub DeDRMS {
     my $apSINF = $self->GetAtomPos($AtomSINF);
     my $apMDAT = $self->GetAtomPos($AtomMDAT);
     $self->GetSampleTable();
-    my $adUSER = $self->GetAtomData( GetAtomPos($AtomUSER), 1 );
-    my $adKEY  = $self->GetAtomData( GetAtomPos($AtomKEY ), 1 );
-    my $adIVIV = $self->GetAtomData( GetAtomPos($AtomIVIV), 0 );
-    my $adNAME = $self->GetAtomData( GetAtomPos($AtomNAME), 0 );
-    my $adPRIV = $self->GetAtomData( GetAtomPos($AtomPRIV), 0 );
-    my $userID  = unpack('S', $adUSER);
-    my $keyID   = unpack('S', $adKEY );
+    my $adUSER = $self->GetAtomData( $self->GetAtomPos($AtomUSER), 1 );
+    my $adKEY  = $self->GetAtomData( $self->GetAtomPos($AtomKEY ), 1 );
+    my $adIVIV = $self->GetAtomData( $self->GetAtomPos($AtomIVIV), 0 );
+    my $adNAME = $self->GetAtomData( $self->GetAtomPos($AtomNAME), 0 );
+    my $adPRIV = $self->GetAtomData( $self->GetAtomPos($AtomPRIV), 0 );
+    my $userID  = unpack('L', $adUSER);
+    my $keyID   = unpack('L', $adKEY );
     my $strNAME = unpack('a', $adNAME);
-    my $userKey = GetUserKey($userID, $keyID);
-    my $md5Hash = md5(substr($adNAME, 0, index($adNAME, '\x0')), $adIVIV);
-    $self->Decrypt($adPRIV, 0, length($adPRIV), $userKey, $md5Hash);
-    $self->{alg} = 0;
-    unless($adPRIV =~ /^itun/) { die "Decryption of 'priv' atom failed" }
+    my $userKey = $self->GetUserKey($userID, $keyID);
+    my $name_len = index($adNAME, "\0");
+    my $md5Hash = new Digest::MD5;
+    $md5Hash->add( substr($adNAME, 0, index($adNAME, "\0")), $adIVIV );
+    $self->Decrypt(\$adPRIV, 0, length($adPRIV), $userKey, $md5Hash->digest);
+    unless($adPRIV =~ /^itun/) { die "Decryption of 'priv' atom failed." }
     $key = substr($adPRIV, 24, 16);
-    $iv = substr($adPRIV, 46, 16);
-    for(my $i = 0, my $pos = $apMDAT + 4; $i < length($self->{sampleTable});
-      $pos += $self->{sampleTable}[$i], $i++) {
-        $self->Decrypt($self->{sbuffer}, $pos, 
-          $self->{sampleTable}[$i], $key, $iv);
+    $iv = substr($adPRIV, 48, 16);
+    for(my $i = 0, my $posit = $apMDAT + 4; $i < scalar @{$self->{sampleTable}};
+                 $posit += $self->{sampleTable}->[$i], $i++) {
+print "i is $i, posit $posit, size " . $self->{sampleTable}->[$i] . " \n";
+        $self->Decrypt(\$self->{sbuffer}, $posit, 
+          $self->{sampleTable}->[$i], $key, $iv);
     }
     substr($self->{sbuffer}, $apDRMS, length($AtomMP4A), $AtomMP4A);
     substr($self->{sbuffer}, $apSINF, length($AtomSINF), uc $AtomSINF);
     open($outfh, '>', $outfile) or die "Cannot write to $outfile: $!";
     binmode $outfh;
     print $outfh $self->{sbuffer};
-    close $outfh;
 }
 
 =head1 NAME
@@ -167,6 +166,22 @@ Decode infilename, write to outfilename. Reading slurps of an entire file,
 so output can overwrite the same file without a problem, we hope. Backup first.
 
 =back
+
+=item B<NOTES>
+
+    From Jon Lech Johansen:
+
+        DeDRMS requires that you already have the user key file(s) for
+        your files. The user key file(s) can be generated by playing
+        your files with the VideoLAN Client [1][2].
+
+        DeDRMS does not remove the UserID, name and email address.
+        The purpose of DeDRMS is to enable Fair Use, not facilitate
+        copyright infringement.
+
+    [1] http://www.videolan.org/vlc/ [videolan.org]
+    [2] http://wiki.videolan.org/tiki-read_article.php?art icleId=5 [videolan.org]
+
 
 =head1 AUTHOR
 
