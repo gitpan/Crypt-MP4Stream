@@ -4,7 +4,7 @@ require 5.004;
 use strict;
 use warnings;
 use vars qw($VERSION);
-$VERSION = '0.01_01';
+$VERSION = '0.01_02';
 
 use Crypt::Rijndael;
 use Digest::MD5 qw(md5);
@@ -18,9 +18,10 @@ sub new {
     my($class, %args) = @_;
 	my $self = {};
 	bless($self, $class);
-    foreach my $k (qw( strHome sPfix dirSepChar )) 
+    foreach my $k (qw( strHome sPfix dirSep )) 
       { $self->{$k} = $args{$k} if $args{$k} }
     unless($self->{strHome}) {
+        no warnings;
         require Win32::TieRegistry;
         $self->{strHome} =
            $Win32::TieRegistry::Registry->
@@ -66,7 +67,8 @@ sub GetUserKey {
     my ($userKey, $strFile, $fh);
     $strFile = sprintf("%s%s%s%s%8s.%5d", $self->{strHome}, $self->{dirSep}, 
       $self->{sPfix}, $self->{dirSep}, $userID, $keyID);
-    open($fh, 'rb', $strFile) or die "Cannot open file $strFile: $!";
+    open($fh, '<', $strFile) or die "Cannot open file $strFile: $!";
+    binmode $fh;
     read($fh, $userKey, -s $strFile);
     close $fh;
     return $userKey;
@@ -125,6 +127,10 @@ sub DeDRMS {
 
 Crypt::MP4Stream -- DRMS decoding of Apple style encrypted MP4 player files
 
+=head1 DESCRIPTION
+    
+Perl port of the DeDRMS.cs program by Jon Lech Johansen
+
 =head1 SYNOPSIS
 
 use Crypt::MP4Stream;
@@ -134,23 +140,46 @@ my $outfile = 'mydecodedfile';
 my $deDRMS = new Crypt::MP4Stream;
 $deDRMS->DeDRMS($mp4file, $outfile);
 
-=head1 DESCRIPTION
-
-Perl implementation of DeDRMS
-
 =head1 METHODS
 
 =over 4
 
-=item new
+=item B<new>
 
-=item DeDRMS
+my $cs = new Crypt::MP4Stream;
 
+my $cs_conparam = Crypt::MP4Stream->new(
+  strHome => '/winroot/Documents and Settings/administrator/Application Data',
+  sPfix => '.', 
+  dirSep => '/'
+);
 
+Create the decoding object. strHome is optional, the name of the
+directory containing the keyfile. sPfix is '.' for unix, otherwise generally 
+nil. dirSep is the char that separates directories, generally / or \.
+
+=item B<DeDRMS>
+
+my $cs = new Crypt::MP4Stream;
+$cs->DeDRMS('infilename', 'outfilename');
+
+Decode infilename, write to outfilename. Reading slurps of an entire file,
+so output can overwrite the same file without a problem, we hope. Backup first.
+
+=back
+
+=head1 AUTHOR
+
+Original C# version: Jon Lech Johansen <jon-vl@nanocrew.net>
+Perl version: William Herrera (wherrera@skylightview.com).
+
+=head1 SUPPORT
+
+Questions, feature requests and bug reports should go to wherrera@skylightview.com
 
 =head1 COPYRIGHT
 
-/*****************************************************************************
+ /*****************************************************************************
  * DeDRMS.cs: DeDRMS 0.1
  *****************************************************************************
  * Copyright (C) 2004 Jon Lech Johansen <jon-vl@nanocrew.net>
@@ -170,10 +199,16 @@ Perl implementation of DeDRMS
  * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111, USA.
  *****************************************************************************/
 
-Perl translation with portability modifications copyright 2004,
-by William Herrera, email withheld
+=over 4
 
-Any and all of my code modifications of the original also are under GPL.
+Perl translation with portability modifications Copyright (C) 2004,
+by William Herrera. Any and all of Perl code modifications of the original 
+also are under GPL copyright.
+
+This module is free software; you can redistribute it and/or modify it under 
+the same terms as Perl itself. 
+
+=back
 
 =cut
 
